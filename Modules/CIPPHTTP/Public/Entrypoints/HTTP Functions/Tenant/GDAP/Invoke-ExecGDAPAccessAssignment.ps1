@@ -9,7 +9,6 @@ function Invoke-ExecGDAPAccessAssignment {
     param($Request, $TriggerMetadata)
 
     $APIName = $Request.Params.CIPPEndpoint
-    Write-LogMessage -headers $Request.Headers -API $APINAME -message 'Accessed this API' -Sev 'Debug'
 
     $Action = $Request.Body.Action ?? $Request.Query.Action
     $Id = $Request.Body.Id ?? $Request.Query.Id
@@ -27,7 +26,7 @@ function Invoke-ExecGDAPAccessAssignment {
                 }
             } else {
                 $GDAPRoleTemplatesTable = Get-CIPPTable -TableName 'GDAPRoleTemplates'
-                $Mappings = Get-CIPPAzDataTableEntity @GDAPRoleTemplatesTable -Filter "PartitionKey eq 'RoleTemplate' and RowKey eq '$($RoleTemplateId)'" | Select-Object -ExpandProperty RoleMappings | ConvertFrom-Json
+                $Mappings = Get-CIPPAzDataTableEntity @GDAPRoleTemplatesTable -Filter "PartitionKey eq 'RoleTemplate' and RowKey eq '$(ConvertTo-CIPPODataFilterValue -Value $RoleTemplateId)'" | Select-Object -ExpandProperty RoleMappings | ConvertFrom-Json
 
                 $RelationshipRequests = @(
                     @{

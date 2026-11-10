@@ -24,7 +24,7 @@ function Invoke-ListUserMailboxDetails {
     $CachedMailbox = $null
     try {
         $ReportingTable = Get-CIPPTable -TableName 'CippReportingDB'
-        $CachedEntity = Get-CIPPAzDataTableEntity @ReportingTable -Filter "PartitionKey eq '$TenantFilter' and RowKey eq 'Mailboxes-$UserID'"
+        $CachedEntity = Get-CIPPAzDataTableEntity @ReportingTable -Filter "PartitionKey eq '$(ConvertTo-CIPPODataFilterValue -Value $TenantFilter)' and RowKey eq 'Mailboxes-$(ConvertTo-CIPPODataFilterValue -Value $UserID)'"
         if ($CachedEntity.Data) {
             $CachedMailbox = $CachedEntity.Data | ConvertFrom-Json
         }
@@ -302,6 +302,7 @@ function Invoke-ListUserMailboxDetails {
             HiddenFromAddressListsEnabled,
             ExternalDirectoryObjectId,
             IsDirSynced,
+            IsExchangeCloudManaged,
             MessageCopyForSendOnBehalfEnabled,
             MessageCopyForSentAsEnabled,
             LitigationHoldEnabled,

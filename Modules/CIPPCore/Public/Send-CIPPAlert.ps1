@@ -17,11 +17,18 @@ function Send-CIPPAlert {
         $RowKey = [string][guid]::NewGuid(),
         $Attachments,
         $AffectedUser,
+        # Device the alert is about: IntuneId and/or EntraDeviceId and/or SerialNumber, DisplayName. PSA extensions that
+        # can attach a device use it; the others ignore it.
+        $AffectedDevice,
         $PsaTicketPriority,
         $PSAReference,
         $PSATicketId,
         $PSAConsolidationKey,
-        [switch]$UseStandardizedSchema
+        [switch]$UseStandardizedSchema,
+        # push only: the CIPP user (UPN) whose registered devices receive it
+        $TargetUser,
+        $PushMessage,
+        $Url
     )
     Write-Information 'Shipping Alert'
     $Table = Get-CIPPTable -TableName SchedulerConfig
@@ -30,6 +37,48 @@ function Send-CIPPAlert {
 
     if ($HTMLContent) {
         $HTMLContent = Get-CIPPTextReplacement -TenantFilter $TenantFilter -Text $HTMLContent
+    }
+
+    if ($Type -eq 'push') {
+        if ([string]::IsNullOrWhiteSpace($TargetUser)) { return 'No target user for push notification' }
+        $SubTable = Get-CIPPTable -tablename 'PushSubscriptions'
+        $Subscriptions = @(Get-CIPPAzDataTableEntity @SubTable -Filter "PartitionKey eq '$TargetUser'")
+        if ($Subscriptions.Count -eq 0) { return "No push devices registered for $TargetUser" }
+
+        $Keys = Get-CIPPVapidKeys
+        $CippConfigTable = Get-CIPPTable -tablename 'Config'
+        $CippUrl = (Get-CIPPAzDataTableEntity @CippConfigTable -Filter "PartitionKey eq 'InstanceProperties' and RowKey eq 'CIPPURL'").Value
+        $Subject = if ($CippUrl) { "https://$CippUrl" } else { 'mailto:noreply@cipp.app' }
+        $Payload = @{
+            title = if ($Title) { "$Title" } else { 'CIPP' }
+            body  = "$PushMessage"
+            url   = if ($Url) { "$Url" } else { '/' }
+        } | ConvertTo-Json -Compress
+
+        $Sent = 0
+        $Pruned = 0
+        foreach ($Sub in $Subscriptions) {
+            try {
+                if ($PSCmdlet.ShouldProcess($Sub.DeviceName, 'Sending push notification')) {
+                    $Result = [CIPP.WebPush]::Send($Sub.Endpoint, $Sub.P256dh, $Sub.Auth, $Payload, $Keys.PublicKey, $Keys.PrivateKey, $Subject, 86400)
+                    if ($Result.IsSuccess) {
+                        $Sent++
+                    } elseif ($Result.IsGone) {
+                        # The browser dropped the subscription; the row is dead weight.
+                        Remove-AzDataTableEntity @SubTable -Entity $Sub -Force | Out-Null
+                        $Pruned++
+                        Write-LogMessage -API $APIName -message "Removed expired push subscription '$($Sub.DeviceName)' for $TargetUser (push service returned HTTP $($Result.StatusCode): $($Result.Content))" -Sev 'Info'
+                    } else {
+                        Write-LogMessage -API $APIName -message "Push to '$($Sub.DeviceName)' for $TargetUser failed with HTTP $($Result.StatusCode): $($Result.Content)" -Sev 'Warning'
+                    }
+                }
+            } catch {
+                Write-LogMessage -API $APIName -message "Push to '$($Sub.DeviceName)' for $TargetUser failed: $($_.Exception.Message)" -Sev 'Warning'
+            }
+        }
+        $Summary = "Push sent to $Sent of $($Subscriptions.Count) device(s) for $TargetUser"
+        if ($Pruned) { $Summary = "$Summary ($Pruned expired subscription(s) removed)" }
+        return $Summary
     }
 
     if ($Type -eq 'email') {
@@ -405,6 +454,10 @@ function Send-CIPPAlert {
                     $Alert.AffectedUser = $AffectedUser
                     $UserLabel = if ($AffectedUser.UPN) { $AffectedUser.UPN } elseif ($AffectedUser.AzureOID) { "OID:$($AffectedUser.AzureOID)" } else { 'unknown' }
                     Write-Information "PSA alert AffectedUser: $UserLabel"
+                }
+                if ($AffectedDevice) {
+                    $Alert.AffectedDevice = $AffectedDevice
+                    Write-Information "PSA alert AffectedDevice: $($AffectedDevice.DisplayName ?? $AffectedDevice.SerialNumber ?? $AffectedDevice.IntuneId)"
                 }
                 if ($PsaTicketPriority) {
                     $Alert.PsaTicketPriority = $PsaTicketPriority

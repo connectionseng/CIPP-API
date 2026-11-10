@@ -20,7 +20,7 @@ function Set-CIPPDBCacheGroups {
         Write-LogMessage -API 'CIPPDBCache' -tenant $TenantFilter -message 'Caching groups' -sev Debug
 
         $MemberBatchSize = 50
-        $GroupSelect = 'id,createdDateTime,displayName,description,mail,mailEnabled,mailNickname,resourceProvisioningOptions,securityEnabled,visibility,organizationId,onPremisesSamAccountName,membershipRule,groupTypes,onPremisesSyncEnabled,assignedLicenses,licenseProcessingState'
+        $GroupSelect = 'id,createdDateTime,displayName,description,mail,mailEnabled,mailNickname,resourceProvisioningOptions,securityEnabled,visibility,organizationId,onPremisesSamAccountName,membershipRule,groupTypes,onPremisesSyncEnabled,assignedLicenses,licenseProcessingState,membershipRuleProcessingState'
         $GroupUri = "https://graph.microsoft.com/beta/groups?`$top=999&`$select=$GroupSelect&`$expand=owners(`$select=id,displayName,userPrincipalName)"
 
         # Stream groups in batches of $MemberBatchSize so peak memory is one batch of rows
@@ -94,7 +94,9 @@ function Set-CIPPDBCacheGroups {
                 $NoteProperties['groupType'] = $groupType
                 $NoteProperties['calculatedGroupType'] = $calculatedGroupType
 
-                $Group | Add-Member -NotePropertyMembers $NoteProperties -Force
+                # Same as Add-Member -Force without its pipeline: half the allocation per row
+                $Props = $Group.PSObject.Properties
+                foreach ($Name in $NoteProperties.Keys) { $Props.Remove($Name); $Props.Add([psnoteproperty]::new($Name, $NoteProperties[$Name])) }
                 $Count.Value++
                 $PipelineWriter.Process($Group)
             }
